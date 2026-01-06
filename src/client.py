@@ -24,8 +24,18 @@ class HeadlockResponse:
 
 
 def _parse_mcp_result(result) -> dict:
+    # First try structured content
     if getattr(result, "structuredContent", None) is not None:
-        return result.structuredContent
+        content = result.structuredContent
+        if isinstance(content, dict):
+            return content
+        # If it's a Pydantic model, convert to dict
+        if hasattr(content, "model_dump"):
+            return content.model_dump()
+        elif hasattr(content, "__dict__"):
+            return content.__dict__
+    
+    # Fall back to parsing text content
     for block in getattr(result, "content", []) or []:
         text = getattr(block, "text", None)
         if text:
@@ -33,7 +43,8 @@ def _parse_mcp_result(result) -> dict:
                 return json.loads(text)
             except Exception:
                 pass
-    raise RuntimeError("Unexpected MCP tool result")
+    
+    raise RuntimeError("Could not parse MCP result")
 
 
 class HeadlockClient:
@@ -82,7 +93,6 @@ class HeadlockClient:
         session_id: Optional[str] = None,
         context: Optional[str] = None,
     ) -> HeadlockResponse:
-        # Preferred: MCP Streamable HTTP
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as http_client:
                 async with streamable_http_client(
@@ -103,19 +113,12 @@ class HeadlockClient:
                 should_terminate=data.get("should_terminate", False),
             )
         except Exception:
-            # Fallback: legacy HTTP endpoint
-            with httpx.Client(timeout=self.timeout) as client:
-                response = client.post(
-                    f"{self.server_url}/headlock/enter-headlock",
-                    json={"session_id": session_id, "context": context},
-                )
-                response.raise_for_status()
-                data = response.json()
-                return HeadlockResponse(
-                    session_id=data["session_id"],
-                    instruction=data.get("instruction"),
-                    should_terminate=data.get("should_terminate", False),
-                )
+            # On error, return a response that terminates the session
+            return HeadlockResponse(
+                session_id=session_id or "error",
+                instruction=None,
+                should_terminate=True,
+            )
     
     def continue_headlock(
         self,
@@ -149,18 +152,12 @@ class HeadlockClient:
                 should_terminate=data.get("should_terminate", False),
             )
         except Exception:
-            with httpx.Client(timeout=self.timeout) as client:
-                response = client.post(
-                    f"{self.server_url}/headlock/continue-headlock",
-                    json={"session_id": session_id, "context": context},
-                )
-                response.raise_for_status()
-                data = response.json()
-                return HeadlockResponse(
-                    session_id=data["session_id"],
-                    instruction=data.get("instruction"),
-                    should_terminate=data.get("should_terminate", False),
-                )
+            # On error, return a response that terminates the session
+            return HeadlockResponse(
+                session_id=session_id,
+                instruction=None,
+                should_terminate=True,
+            )
 
 
 # Async version for use with async AI agents
@@ -196,18 +193,12 @@ class AsyncHeadlockClient:
                 should_terminate=data.get("should_terminate", False),
             )
         except Exception:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(
-                    f"{self.server_url}/headlock/enter-headlock",
-                    json={"session_id": session_id, "context": context},
-                )
-                response.raise_for_status()
-                data = response.json()
-                return HeadlockResponse(
-                    session_id=data["session_id"],
-                    instruction=data.get("instruction"),
-                    should_terminate=data.get("should_terminate", False),
-                )
+            # On error, return a response that terminates the session
+            return HeadlockResponse(
+                session_id=session_id or "error",
+                instruction=None,
+                should_terminate=True,
+            )
     
     async def continue_headlock(
         self,
@@ -234,15 +225,9 @@ class AsyncHeadlockClient:
                 should_terminate=data.get("should_terminate", False),
             )
         except Exception:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(
-                    f"{self.server_url}/headlock/continue-headlock",
-                    json={"session_id": session_id, "context": context},
-                )
-                response.raise_for_status()
-                data = response.json()
-                return HeadlockResponse(
-                    session_id=data["session_id"],
-                    instruction=data.get("instruction"),
-                    should_terminate=data.get("should_terminate", False),
-                )
+            # On error, return a response that terminates the session
+            return HeadlockResponse(
+                session_id=session_id,
+                instruction=None,
+                should_terminate=True,
+            )
