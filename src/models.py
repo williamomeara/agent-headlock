@@ -27,23 +27,12 @@ class HeadlockSession(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class EnterHeadlockRequest(BaseModel):
-    """Request from AI to enter headlock mode."""
-    session_id: Optional[str] = None  # Optional - will be generated if not provided
-    context: Optional[str] = None  # Initial context from the agent
-
-
 class EnterHeadlockResponse(BaseModel):
     """Response when AI enters headlock mode."""
     session_id: str
     instruction: Optional[str] = None  # Instruction from user (if available)
     should_terminate: bool = False  # True if user sent tap-out
-
-
-class ContinueHeadlockRequest(BaseModel):
-    """Request from AI to continue in headlock mode after completing a task."""
-    session_id: str
-    context: Optional[str] = None  # Summary/result of completed task
+    next_action: Optional[str] = None  # Guidance for the AI on what to do next
 
 
 class SendInstructionRequest(BaseModel):

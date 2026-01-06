@@ -11,9 +11,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
 from .models import (
-    EnterHeadlockRequest,
     EnterHeadlockResponse,
-    ContinueHeadlockRequest,
     SendInstructionRequest,
     SendInstructionResponse,
     SessionInfoResponse,
@@ -25,21 +23,18 @@ from .session_manager import session_manager
 # MCP Tools (Streamable HTTP mounted at /mcp)
 mcp = FastMCP(
     name="headlock",
-    instructions="""You are an AI agent that works in "headlock mode" with an interactive terminal user.
+    instructions="""EXECUTOR AI MODE: You receive instructions and execute them using ALL TOOLS AVAILABLE TO YOU.
 
-**Important: This is a loop, not a one-shot tool call.**
+INSTRUCTION EXECUTION PROTOCOL:
+1. Call headlock-enter_headlock → receive instruction  
+2. **IMMEDIATELY EXECUTE** the instruction using ALL available tools (read files, run commands, analyze code, edit files, etc.)
+3. **RESPOND CONVERSATIONALLY** with the complete execution results
+4. Call headlock-continue_headlock to get the next instruction
+5. Repeat for next instruction
 
-1. First, call `headlock-enter_headlock` (optionally with context) to block and wait for the user's first instruction.
-2. After entering, you will receive an instruction. Execute it.
-3. Once done, call `headlock-continue_headlock` with:
-   - `session_id`: The ID from step 1
-   - `context`: A summary of what you just completed
-4. This will block again waiting for the next instruction.
-5. **Repeat steps 2-4 until `should_terminate` is true.**
+**TOOL USAGE IS MANDATORY FOR EXECUTION** - Use filesystem tools, code analysis tools, terminal commands, file editing tools, etc. to fulfill each instruction completely.
 
-When `should_terminate: true`, the user has "tapped out" — end the session gracefully.
-
-The user in the terminal will see your context/status and can send new instructions. They control the flow; you just execute what they ask.""",
+**You are a tool-using executor that responds conversationally with results, then continues the loop.**""",
     streamable_http_path="/",
     transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
 )
@@ -124,12 +119,13 @@ async def _enter_headlock(session_id: Optional[str], context: Optional[str]) -> 
         "created_at": session.created_at.isoformat(),
     })
 
-    instruction, should_terminate = await session_manager.wait_for_instruction(session.session_id)
+    instruction, should_terminate = await session_manager.wait_for_instruction(session.session_id, timeout=3600)
 
     return EnterHeadlockResponse(
         session_id=session.session_id,
         instruction=instruction,
         should_terminate=should_terminate,
+        next_action="Execute the instruction using all available tools (read files, run commands, analyze code, edit files, etc.), respond conversationally with the results, then call headlock-continue_headlock to get the next instruction." if instruction and not should_terminate else None,
     )
 
 
@@ -146,27 +142,14 @@ async def _continue_headlock(session_id: str, context: Optional[str]) -> EnterHe
         "context": context,
     })
 
-    instruction, should_terminate = await session_manager.wait_for_instruction(session_id)
+    instruction, should_terminate = await session_manager.wait_for_instruction(session_id, timeout=3600)
 
     return EnterHeadlockResponse(
         session_id=session_id,
         instruction=instruction,
         should_terminate=should_terminate,
+        next_action="Execute the instruction using all available tools (read files, run commands, analyze code, edit files, etc.), respond conversationally with the results, then call headlock-continue_headlock to get the next instruction." if instruction and not should_terminate else None,
     )
-
-
-# ============================================================================
-# Legacy HTTP Endpoints (for non-MCP AI agents)
-# ============================================================================
-
-@app.post("/headlock/enter-headlock", response_model=EnterHeadlockResponse)
-async def enter_headlock_legacy(request: EnterHeadlockRequest):
-    return await _enter_headlock(request.session_id, request.context)
-
-
-@app.post("/headlock/continue-headlock", response_model=EnterHeadlockResponse)
-async def continue_headlock_legacy(request: ContinueHeadlockRequest):
-    return await _continue_headlock(request.session_id, request.context)
 
 
 # ============================================================================
@@ -175,20 +158,28 @@ async def continue_headlock_legacy(request: ContinueHeadlockRequest):
 
 @mcp.tool(
     name="headlock-enter_headlock",
-    description="[STEP 1/LOOP] Enter headlock mode and block waiting for the user's first instruction. Returns { session_id, instruction, should_terminate }. You must then loop: execute the instruction, call continue_headlock with the result, and keep calling continue_headlock until should_terminate is true.",
-    structured_output=True,
+    description="GET FIRST INSTRUCTION. Call this to start execution loop. Returns instruction. Then USE ALL AVAILABLE TOOLS to execute it completely (read files, run commands, analyze code, edit files, etc.), respond conversationally with results, then call continue_headlock.",
 )
-async def mcp_enter_headlock(session_id: Optional[str] = None, context: Optional[str] = None) -> EnterHeadlockResponse:
-    return await _enter_headlock(session_id, context)
+async def mcp_enter_headlock(session_id: Optional[str] = None, context: Optional[str] = None) -> str:
+    response = await _enter_headlock(session_id, context)
+    return json.dumps({
+        "session_id": response.session_id,
+        "instruction": response.instruction,
+        "should_terminate": response.should_terminate,
+    })
 
 
 @mcp.tool(
     name="headlock-continue_headlock",
-    description="[LOOP STEP] After executing a user instruction, call this to send your result/context and block waiting for the next instruction. Keep calling this in a loop until should_terminate is true.",
-    structured_output=True,
+    description="GET NEXT INSTRUCTION. Call this AFTER responding conversationally with execution results. Gets the next instruction to execute.",
 )
-async def mcp_continue_headlock(session_id: str, context: Optional[str] = None) -> EnterHeadlockResponse:
-    return await _continue_headlock(session_id, context)
+async def mcp_continue_headlock(session_id: str, context: Optional[str] = None) -> str:
+    response = await _continue_headlock(session_id, context)
+    return json.dumps({
+        "session_id": response.session_id,
+        "instruction": response.instruction,
+        "should_terminate": response.should_terminate,
+    })
 
 
 # Mount the MCP Streamable HTTP server at /mcp
