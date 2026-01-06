@@ -1,0 +1,15 @@
+services:
+  headlock-server:
+    build: .
+    container_name: agent-headlock-server
+    ports:
+      - "8765:8765"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8765
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
