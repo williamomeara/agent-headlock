@@ -1,2 +1,17 @@
 .venv
 test_terminal.py
+
+# Development files
+.vscode/
+activate.sh
+check_env.py
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Examples (uncomment if you want to commit examples)
+examples/__pycache__/
+examples/demo_terminal.py
